@@ -23,7 +23,6 @@ module "storage" {
   depends_on = [module.iam]
 }
 
-/*
 module "airflow-cluster" {
   source             = "./modules/airflow-cluster"
   instance_name      = var.yc_instance_name
@@ -33,7 +32,6 @@ module "airflow-cluster" {
   bucket_name        = module.storage.bucket
   provider_config    = var.yc_config
 }
-*/
 
 module "postgres-cluster" {
   source            = "./modules/postgres-cluster"
@@ -129,7 +127,6 @@ resource "local_file" "variables_file" {
   file_permission = "0600"
 }
 
-/*
 module "kafka" {
   source = "./modules/kafka"
 
@@ -156,7 +153,6 @@ module "kafka" {
   topics = var.kafka_topics
   users  = var.kafka_users
 }
-*/
 
 # Запись переменных в .env файл
 resource "null_resource" "update_env" {

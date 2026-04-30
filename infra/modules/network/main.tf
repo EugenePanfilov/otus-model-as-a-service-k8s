@@ -82,7 +82,6 @@ resource "yandex_vpc_security_group" "security_group" {
   }
 }
 
-/*
 resource "yandex_vpc_security_group" "kafka_security_group" {
   name        = "${var.security_group_name}-kafka"
   description = "Security group for Managed Kafka cluster"
@@ -103,4 +102,3 @@ resource "yandex_vpc_security_group" "kafka_security_group" {
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 }
-*/
