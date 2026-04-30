@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.ipynb_checkpoints
+*.pyc
+*.pyo
+*.pyd
+*.log
+data
+notebooks
+infra/.terraform
+infra/terraform.tfstate
+infra/terraform.tfstate.backup

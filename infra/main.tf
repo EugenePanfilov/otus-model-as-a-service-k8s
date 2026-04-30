@@ -1,0 +1,261 @@
+# main.tf
+
+module "iam" {
+  source          = "./modules/iam"
+  name            = var.yc_service_account_name
+  provider_config = var.yc_config
+}
+
+module "network" {
+  source          = "./modules/network"
+  network_name    = var.yc_network_name
+  subnet_name     = var.yc_subnet_name
+  provider_config = var.yc_config
+}
+
+module "storage" {
+  source          = "./modules/storage"
+  name            = var.yc_bucket_name
+  provider_config = var.yc_config
+  access_key      = module.iam.access_key
+  secret_key      = module.iam.secret_key
+
+  depends_on = [module.iam]
+}
+
+/*
+module "airflow-cluster" {
+  source             = "./modules/airflow-cluster"
+  instance_name      = var.yc_instance_name
+  subnet_id          = module.network.subnet_id
+  service_account_id = module.iam.service_account_id
+  admin_password     = var.admin_password
+  bucket_name        = module.storage.bucket
+  provider_config    = var.yc_config
+}
+*/
+
+module "postgres-cluster" {
+  source            = "./modules/postgres-cluster"
+  cluster_name      = var.yc_postgres_cluster_name
+  network_id        = module.network.network_id
+  security_group_id = module.network.security_group_id
+  subnet_id         = module.network.subnet_id
+  postgres_password = var.postgres_password
+  provider_config   = var.yc_config
+}
+
+module "mlflow-server" {
+  source             = "./modules/mlflow-server"
+  instance_name      = var.yc_mlflow_instance_name
+  subnet_id          = module.network.subnet_id
+  service_account_id = module.iam.service_account_id
+  ubuntu_image_id    = var.ubuntu_image_id
+  public_key_path    = var.public_key_path
+  private_key_path   = var.private_key_path
+
+  s3_endpoint_url = var.yc_storage_endpoint_url
+  s3_bucket_name  = module.storage.bucket
+  s3_access_key   = module.iam.access_key
+  s3_secret_key   = module.iam.secret_key
+
+  postgres_password = var.postgres_password
+  postgres_host     = module.postgres-cluster.postgres_host
+  postgres_port     = module.postgres-cluster.postgres_port
+  postgres_db       = module.postgres-cluster.postgres_db
+  postgres_user     = module.postgres-cluster.postgres_user
+
+  provider_config = var.yc_config
+}
+
+module "k8s" {
+  source = "./modules/k8s"
+
+  name = var.k8s_cluster_name
+
+  network_id = module.network.network_id
+  subnet_id  = module.network.subnet_id
+  zone       = var.yc_config.zone
+
+  service_account_id      = module.iam.service_account_id
+  node_service_account_id = module.iam.service_account_id
+
+  security_group_ids = [
+    module.network.security_group_id
+  ]
+
+  k8s_version        = var.k8s_version
+  node_count         = var.k8s_node_count
+  node_cores         = var.k8s_node_cores
+  node_memory        = var.k8s_node_memory
+  node_core_fraction = var.k8s_node_core_fraction
+  node_disk_size     = var.k8s_node_disk_size
+  preemptible        = var.k8s_preemptible_nodes
+
+  depends_on = [
+    module.network,
+    module.iam
+  ]
+}
+
+resource "local_file" "variables_file" {
+  content = jsonencode({
+    # общие переменные
+    YC_ZONE           = var.yc_config.zone
+    YC_FOLDER_ID      = var.yc_config.folder_id
+    YC_SUBNET_ID      = module.network.subnet_id
+    YC_SSH_PUBLIC_KEY = trimspace(file(var.public_key_path))
+
+    # S3
+    S3_ENDPOINT_URL = var.yc_storage_endpoint_url
+    S3_ACCESS_KEY   = module.iam.access_key
+    S3_SECRET_KEY   = module.iam.secret_key
+    S3_BUCKET_NAME  = module.storage.bucket
+
+    # MLflow
+    MLFLOW_TRACKING_URI = module.mlflow-server.mlflow_tracking_uri
+
+    # PostgreSQL
+    POSTGRES_HOST = module.postgres-cluster.postgres_host
+    POSTGRES_PORT = module.postgres-cluster.postgres_port
+    POSTGRES_DB   = module.postgres-cluster.postgres_db
+    POSTGRES_USER = module.postgres-cluster.postgres_user
+
+    # Kubernetes
+    K8S_CLUSTER_ID = module.k8s.cluster_id
+  })
+
+  filename        = "./variables.json"
+  file_permission = "0600"
+}
+
+/*
+module "kafka" {
+  source = "./modules/kafka"
+
+  cluster_name = var.kafka_cluster_name
+  environment  = "PRODUCTION"
+
+  network_id         = module.network.network_id
+  subnet_ids         = [module.network.subnet_id]
+  security_group_ids = [module.network.kafka_security_group_id]
+  zones              = [var.yc_config.zone]
+
+  assign_public_ip    = var.kafka_assign_public_ip
+  deletion_protection = false
+
+  kafka_version      = var.kafka_version
+  brokers_count      = var.kafka_brokers_count
+  resource_preset_id = var.kafka_resource_preset_id
+  disk_type_id       = var.kafka_disk_type_id
+  disk_size          = var.kafka_disk_size
+
+  enable_kafka_ui = var.kafka_enable_kafka_ui
+  enable_rest_api = var.kafka_enable_rest_api
+
+  topics = var.kafka_topics
+  users  = var.kafka_users
+}
+*/
+
+# Запись переменных в .env файл
+resource "null_resource" "update_env" {
+  provisioner "local-exec" {
+    command = <<EOT
+      touch ../.env
+
+      STORAGE_ENDPOINT_URL=${var.yc_storage_endpoint_url}
+      BUCKET_NAME=${module.storage.bucket}
+      ACCESS_KEY=${module.iam.access_key}
+      SECRET_KEY=${module.iam.secret_key}
+      MLFLOW_TRACKING_URI=${module.mlflow-server.mlflow_tracking_uri}
+      POSTGRES_HOST=${module.postgres-cluster.postgres_host}
+      POSTGRES_PORT=${module.postgres-cluster.postgres_port}
+      POSTGRES_DB=${module.postgres-cluster.postgres_db}
+      POSTGRES_USER=${module.postgres-cluster.postgres_user}
+      POSTGRES_PASSWORD=${var.postgres_password}
+      POSTGRES_CONNECTION_STRING=${module.postgres-cluster.postgres_connection_string}
+      K8S_CLUSTER_ID=${module.k8s.cluster_id}
+
+      if grep -q "^S3_ENDPOINT_URL=" ../.env; then
+        sed -i "s|^S3_ENDPOINT_URL=.*|S3_ENDPOINT_URL=$STORAGE_ENDPOINT_URL|" ../.env
+      else
+        echo "S3_ENDPOINT_URL=$STORAGE_ENDPOINT_URL" >> ../.env
+      fi
+
+      if grep -q "^S3_BUCKET_NAME=" ../.env; then
+        sed -i "s|^S3_BUCKET_NAME=.*|S3_BUCKET_NAME=$BUCKET_NAME|" ../.env
+      else
+        echo "S3_BUCKET_NAME=$BUCKET_NAME" >> ../.env
+      fi
+
+      if grep -q "^S3_ACCESS_KEY=" ../.env; then
+        sed -i "s|^S3_ACCESS_KEY=.*|S3_ACCESS_KEY=$ACCESS_KEY|" ../.env
+      else
+        echo "S3_ACCESS_KEY=$ACCESS_KEY" >> ../.env
+      fi
+
+      if grep -q "^S3_SECRET_KEY=" ../.env; then
+        sed -i "s|^S3_SECRET_KEY=.*|S3_SECRET_KEY=$SECRET_KEY|" ../.env
+      else
+        echo "S3_SECRET_KEY=$SECRET_KEY" >> ../.env
+      fi
+
+      if grep -q "^MLFLOW_TRACKING_URI=" ../.env; then
+        sed -i "s|^MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI|" ../.env
+      else
+        echo "MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_HOST=" ../.env; then
+        sed -i "s|^POSTGRES_HOST=.*|POSTGRES_HOST=$POSTGRES_HOST|" ../.env
+      else
+        echo "POSTGRES_HOST=$POSTGRES_HOST" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_PORT=" ../.env; then
+        sed -i "s|^POSTGRES_PORT=.*|POSTGRES_PORT=$POSTGRES_PORT|" ../.env
+      else
+        echo "POSTGRES_PORT=$POSTGRES_PORT" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_DB=" ../.env; then
+        sed -i "s|^POSTGRES_DB=.*|POSTGRES_DB=$POSTGRES_DB|" ../.env
+      else
+        echo "POSTGRES_DB=$POSTGRES_DB" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_USER=" ../.env; then
+        sed -i "s|^POSTGRES_USER=.*|POSTGRES_USER=$POSTGRES_USER|" ../.env
+      else
+        echo "POSTGRES_USER=$POSTGRES_USER" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_PASSWORD=" ../.env; then
+        sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" ../.env
+      else
+        echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> ../.env
+      fi
+
+      if grep -q "^POSTGRES_CONNECTION_STRING=" ../.env; then
+        sed -i "s|^POSTGRES_CONNECTION_STRING=.*|POSTGRES_CONNECTION_STRING=$POSTGRES_CONNECTION_STRING|" ../.env
+      else
+        echo "POSTGRES_CONNECTION_STRING=$POSTGRES_CONNECTION_STRING" >> ../.env
+      fi
+
+      if grep -q "^K8S_CLUSTER_ID=" ../.env; then
+        sed -i "s|^K8S_CLUSTER_ID=.*|K8S_CLUSTER_ID=$K8S_CLUSTER_ID|" ../.env
+      else
+        echo "K8S_CLUSTER_ID=$K8S_CLUSTER_ID" >> ../.env
+      fi
+    EOT
+  }
+
+  depends_on = [
+    module.iam,
+    module.storage,
+    module.mlflow-server,
+    module.postgres-cluster,
+    module.k8s
+  ]
+}

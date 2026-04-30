@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-api-config
+  namespace: fraud-detection
+data:
+  MODEL_URI: "models:/fraud_detection_model@champion"
+  FRAUD_THRESHOLD: "0.5"
+  FEATURE_COLUMNS: "customer_id,terminal_id,tx_amount,tx_time_seconds,tx_time_days,tx_hour,tx_day_of_week,tx_month,is_weekend"
