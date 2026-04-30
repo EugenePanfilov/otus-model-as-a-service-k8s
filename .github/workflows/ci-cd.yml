@@ -13,6 +13,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: fraud-api
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   test:
     name: Run tests
@@ -44,10 +48,6 @@ jobs:
       - test
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    permissions:
-      contents: read
-      packages: write
 
     outputs:
       image: ${{ steps.image.outputs.image }}
