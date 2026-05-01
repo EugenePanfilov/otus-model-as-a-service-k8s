@@ -97,3 +97,7 @@ deploy-full: create-venv-archive upload-venv-to-bucket upload-src-to-bucket uplo
 	@echo "Full deployment completed successfully"
 	@echo "Virtual environment, source code, DAGs, and data have been uploaded to S3"
 	@echo "You can now run the pipeline in Airflow"
+
+.PHONY: bootstrap-k8s
+bootstrap-k8s:
+	./scripts/bootstrap_k8s.sh
