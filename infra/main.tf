@@ -110,6 +110,18 @@ resource "local_file" "variables_file" {
     S3_SECRET_KEY   = module.iam.secret_key
     S3_BUCKET_NAME  = module.storage.bucket
 
+    # Data Proc
+    DP_SECURITY_GROUP_ID      = module.network.security_group_id
+    DP_SA_ID                  = module.iam.service_account_id
+    DP_SA_AUTH_KEY_PUBLIC_KEY = module.iam.public_key
+    DP_SA_JSON = jsonencode({
+      id                 = module.iam.auth_key_id
+      service_account_id = module.iam.service_account_id
+      created_at         = module.iam.auth_key_created_at
+      public_key         = module.iam.public_key
+      private_key        = module.iam.private_key
+    })
+
     # MLflow
     MLFLOW_TRACKING_URI = module.mlflow-server.mlflow_tracking_uri
 
@@ -118,6 +130,12 @@ resource "local_file" "variables_file" {
     POSTGRES_PORT = module.postgres-cluster.postgres_port
     POSTGRES_DB   = module.postgres-cluster.postgres_db
     POSTGRES_USER = module.postgres-cluster.postgres_user
+
+    # Kafka
+    KAFKA_SCORER_USERNAME   = "fraud-scorer"
+    KAFKA_SCORER_PASSWORD   = var.kafka_users["fraud-scorer"].password
+    KAFKA_PRODUCER_USERNAME = "fraud-producer"
+    KAFKA_PRODUCER_PASSWORD = var.kafka_users["fraud-producer"].password
 
     # Kubernetes
     K8S_CLUSTER_ID = module.k8s.cluster_id

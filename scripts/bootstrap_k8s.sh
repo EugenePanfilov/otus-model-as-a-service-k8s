@@ -35,10 +35,27 @@ echo "MLflow URI: ${MLFLOW_TRACKING_URI}"
 
 echo
 echo "Getting Kubernetes credentials..."
-yc managed-kubernetes cluster get-credentials \
+
+set +e
+timeout 60s yc managed-kubernetes cluster get-credentials \
   --id "${K8S_CLUSTER_ID}" \
   --external \
   --force
+YC_GET_CREDENTIALS_EXIT_CODE=$?
+set -e
+
+if [[ "${YC_GET_CREDENTIALS_EXIT_CODE}" -ne 0 && "${YC_GET_CREDENTIALS_EXIT_CODE}" -ne 124 ]]; then
+  echo "ERROR: failed to get Kubernetes credentials"
+  exit "${YC_GET_CREDENTIALS_EXIT_CODE}"
+fi
+
+if [[ "${YC_GET_CREDENTIALS_EXIT_CODE}" -eq 124 ]]; then
+  echo "WARNING: yc get-credentials timed out, checking whether kubeconfig was updated..."
+fi
+
+echo
+echo "Checking Kubernetes connection..."
+kubectl get nodes --request-timeout=20s
 
 echo
 echo "Applying namespace..."
