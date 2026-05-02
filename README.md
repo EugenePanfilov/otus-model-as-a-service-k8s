@@ -1,174 +1,346 @@
-# OTUS. Асинхронный потоковый режим
+# OTUS. Model as a Service в Kubernetes
 
-Проект реализует end-to-end потоковый MLOps-пайплайн для скоринга фродовых транзакций в Yandex Cloud. Ретроспективные данные автоматически публикуются в Apache Kafka, после чего Spark Structured Streaming читает входной поток, загружает актуальную модель из MLflow Model Registry по алиасу `@champion`, рассчитывает скор для каждой транзакции и записывает результаты в выходной Kafka topic. Оркестрация выполняется через Apache Airflow: DAG автоматически создаёт Dataproc-кластер, запускает streaming job и producer, а после завершения обработки удаляет кластер. Для хранения скриптов, входных файлов, checkpoint’ов и окружения используется S3-совместимый Object Storage. Таким образом, проект демонстрирует полностью автоматизированный production-like сценарий потокового inference, объединяющий Kafka, Spark, MLflow, Airflow и облачную инфраструктуру в единый воспроизводимый пайплайн.
+Проект реализует end-to-end MLOps-пайплайн для обучения и развёртывания модели выявления фродовых транзакций в Yandex Cloud.
 
-В ходе нагрузочного тестирования producer последовательно запускался с возрастающей интенсивностью публикации сообщений в Kafka. По результатам эксперимента было установлено, что при фактической скорости потока как минимум до ~4.3 тыс. сообщений в секунду роста очереди необработанных сообщений по данным Kafka UI не наблюдалось. Это означает, что текущая конфигурация пайплайна выдерживает не менее указанного уровня нагрузки без заметного накопления lag. Точную точку начала устойчивого роста очереди в рамках выполненного эксперимента определить не удалось, поэтому полученный результат следует интерпретировать как нижнюю границу пропускной способности системы.
+Основной сценарий работы:
 
-## Компоненты проекта
+1. Terraform разворачивает облачную инфраструктуру.
+2. Airflow запускает обучающий DAG.
+3. Dataproc/Spark выполняет подготовку данных и обучение модели.
+4. MLflow Tracking Server сохраняет эксперименты, метрики и артефакты модели.
+5. Лучшая модель регистрируется в MLflow Model Registry под именем `fraud_detection_model`.
+6. Для production-инференса используется alias `champion`.
+7. FastAPI-сервис в Kubernetes загружает модель из MLflow и отдаёт предсказания через REST API.
 
-Проект состоит из следующих компонентов:
+Текущая версия проекта использует синхронный REST-инференс. Kafka/streaming-контур был исключён из активной инфраструктуры, чтобы упростить и стабилизировать сдаваемую версию проекта. В дальнейшем Kafka может быть возвращена как отдельный асинхронный контур скоринга и буферизации нагрузки.
 
-1. **Инфраструктура** (директория `/infra`):
-   - Кластер Airflow - оркестрация процессов
-   - Кластер Kafka — потоковая передача транзакций и результатов скоринга
-   - Сервер MLflow - отслеживание экспериментов и хранение моделей
-   - Кластер PostgreSQL - хранение метаданных экспериментов MLflow
-   - S3-хранилище - хранение артефактов экспериментов и исходных данных
-   - Сеть, подсеть и другие ресурсы Yandex Cloud
+## Компоненты инфраструктуры
 
-2. **Модель** (директория `/src`):
-   - PySpark-скрипт для обучения модели с логикой сравнения и регистрации моделей в MLflow
+Инфраструктура описана в директории `/infra` и разворачивается через Terraform.
 
-3. **Оркестрация** (директория `/dags`):
-   - Airflow DAG для регулярного запуска процесса обучения на временном кластере Dataproc
+Основные компоненты:
 
-1. **Вспомогательные скрипты** (директория `/scripts`):
-   - Генерация демонстрационных данных для обучения
-   - Создание архива виртуального окружения
+- **Managed Airflow** — оркестрация пайплайна обучения
+- **Managed Dataproc** — временный Spark-кластер для запуска PySpark jobs
+- **MLflow Server** — отслеживание экспериментов, хранение моделей и Model Registry
+- **Managed PostgreSQL** — backend store для MLflow
+- **Yandex Object Storage** — хранение данных, исходного кода, окружения и MLflow artifacts
+- **Managed Kubernetes** — развёртывание REST API для инференса
+- **LoadBalancer** — публичный доступ к FastAPI-сервису
+- **VPC network / subnet / NAT gateway / security groups** — сетевой слой проекта
 
-## Архитектура решения
+MLflow Server разворачивается без публичного IP и доступен внутри VPC по внутреннему адресу. Это снижает зависимость от публичных IPv4-адресов и уменьшает поверхность атаки.
 
-1. **Исходные данные** и служебные файлы хранятся в S3-совместимом Object Storage
-2. **Apache Kafka** используется как транспортный слой для потоковой передачи транзакций: producer публикует события во входной topic, а результаты скоринга записываются в выходной topic
-3. **Airflow DAG** автоматически создает временный кластер Dataproc, запускает streaming job и producer, а после завершения удаляет кластер
-4. **PySpark / Spark Structured Streaming** запускается на кластере Dataproc, читает поток из Kafka, выполняет подготовку признаков и применяет модель к входящим транзакциям
-5. **MLflow** отслеживает эксперименты, хранит модели и метрики, а также используется как Model Registry для загрузки актуальной версии модели
-6. **PostgreSQL** хранит метаданные экспериментов и моделей MLflow
+## Архитектура
 
-## Начало работы
+```text
+S3 Object Storage
+  ├── data/input_data/
+  ├── src/
+  ├── dags/
+  └── venvs/venv.tar.gz
+        │
+        ▼
+Airflow DAG: training_pipeline_homework
+        │
+        ▼
+Yandex Dataproc / Spark job
+        │
+        ▼
+MLflow Tracking Server + PostgreSQL backend
+        │
+        ▼
+MLflow Model Registry
+fraud_detection_model@champion
+        │
+        ▼
+Kubernetes Deployment: fraud-api
+        │
+        ▼
+FastAPI REST API
+/health
+/ready
+/predict
+```
 
-### Предварительные требования
+## Структура проекта
 
-- [Terraform](https://www.terraform.io/downloads.html) >= 1.0.0
-- [Yandex Cloud CLI](https://cloud.yandex.ru/docs/cli/quickstart)
-- [Python](https://www.python.org/downloads/) == 3.11
-- [s3cmd](https://s3tools.org/download)
+```text
+.
+├── dags/
+│   ├── training_pipeline_homework.py
+│   └── streaming_pipeline_homework.py
+├── data/
+│   └── input_data/
+├── infra/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── modules/
+│   │   ├── airflow-cluster/
+│   │   ├── iam/
+│   │   ├── k8s/
+│   │   ├── mlflow-server/
+│   │   ├── network/
+│   │   ├── postgres-cluster/
+│   │   └── storage/
+│   └── variables.json
+├── k8s/
+│   ├── namespace.yaml
+│   ├── configmap.yaml
+│   ├── deployment.yaml
+│   └── service.yaml
+├── scripts/
+│   ├── bootstrap_k8s.sh
+│   └── create_venv_archive.sh
+├── src/
+│   ├── api/
+│   ├── train_fraud_detection.py
+│   └── common_fraud.py
+├── Dockerfile
+├── Makefile
+├── requirements.txt
+├── requirements-api.txt
+└── README.md
+```
 
-### Шаг 1: Создание инфраструктуры с помощью Terraform
+`streaming_pipeline_homework.py` оставлен в репозитории как задел под будущий Kafka-based streaming scoring, но в текущей активной инфраструктуре Kafka отключена.
+
+## Предварительные требования
+
+Локально должны быть установлены:
+
+- Terraform
+- Yandex Cloud CLI
+- Docker
+- kubectl
+- s3cmd
+- Python virtual environment
+- GitHub Personal Access Token с доступом к GHCR packages
+
+## Развёртывание инфраструктуры
 
 ```bash
 cd infra
 terraform init
 terraform apply
-
-# make
-make init
-make apply
 ```
 
-После создания инфраструктуры, Terraform выведет значения выходных переменных, включая URL сервера MLflow и другие необходимые параметры.
+После успешного применения Terraform создаёт файл:
 
-### Шаг 2: Формирование датасета для обучения модели
-
-Обучающий набор данных формируется из файла 2019-08-22.txt в виде сэмпла на 100 000 строк без перемешивания.
-Для этого необходимо выполнить скрипт:
-
-```bash
-{
-  head -n 1 data/input_data/2019-08-22.txt
-  tail -n +2 data/input_data/2019-08-22.txt | head -n 100000
-} > data/input_data/2019-08-22-sample-100k.txt
+```text
+infra/variables.json
 ```
 
-Скрипт сохранит файл в директории data/input_data.
+Этот файл используется для загрузки переменных в Airflow.
 
-### Шаг 3: Подготовка и загрузка ресурсов в S3-хранилище
+Также обновляется `.env` в корне проекта.
 
-Вы можете использовать команды Makefile для загрузки необходимых ресурсов:
+## Загрузка ресурсов в S3
+
+Из корня проекта:
 
 ```bash
-# Создать и загрузить виртуальное окружение
-make create-venv-archive
-make upload-venv-to-bucket
+source .env
+source .venv/bin/activate
 
-# Загрузить исходный код модели
-make upload-src-to-bucket
-
-# Загрузить DAG файлы
-make upload-dags-to-bucket
-
-# Загрузить данные в S3
-make upload-data-to-bucket
-
-# Или выполнить полное развертывание одной командой
 make deploy-full
 ```
 
-### Шаг 4: Настройка Airflow
+Команда выполняет:
 
-1. Загрузите переменные окружения в UI Airflow из файла variables.json.
-
-2. Включите DAG в веб-интерфейсе Airflow.
-
-### Шаг 5: Мониторинг и получение результатов
-
-Вы можете проверить список экземпляров виртуальных машин:
-```bash
-make instance-list
+```text
+создание архива Python-окружения
+загрузку venvs/venv.tar.gz в S3
+загрузку src/ в S3
+загрузку dags/ в S3
+загрузку входных данных в S3
 ```
 
-Для мониторинга кластера Airflow используйте:
-```bash
-make airflow-cluster-mon
+Если после пересоздания инфраструктуры возникает ошибка S3 `SignatureDoesNotMatch`, нужно обновить локальный `~/.s3cfg` актуальными ключами из `.env`.
+
+## Настройка Airflow
+
+В Airflow UI необходимо импортировать переменные из файла:
+
+```text
+infra/variables.json
 ```
 
-Чтобы загрузить результаты обработки из S3-хранилища:
-```bash
-make download-output-data-from-bucket
+В текущей версии используется основной DAG:
+
+```text
+training_pipeline_homework
 ```
 
-## Работа с MLflow
+Он запускает обучение модели на Dataproc и логирует результат в MLflow.
 
-После запуска MLflow-сервера вы можете открыть его веб-интерфейс по адресу, который был выведен после выполнения `terraform apply`.
+## Проверка модели в MLflow
 
-В интерфейсе MLflow вы сможете:
-- Просматривать эксперименты и их метрики
-- Сравнивать модели между собой
-- Загружать зарегистрированные модели
+После успешного выполнения DAG модель должна быть зарегистрирована как:
 
-## Структура проекта
-
-```
-/
-├── dags/                  # Airflow DAGs
-│   └── training_pipeline_homework.py
-├── data/                  # Данные для обучения и результаты
-│   ├── input_data/        # Входные данные
-│   └── output_data/       # Результаты работы модели
-|── images/                # Изображения с демонстрацией работы
-├── infra/                 # Terraform конфигурация
-├── scripts/               # Вспомогательные скрипты
-│   └── create_venv_archive.sh
-├── src/                   # Исходный код модели
-|   └── streaming/
-|       └── replay_to_kafka_spark.py
-|       └── replay_to_kafka.py
-│   └── ab_test_fraud.py
-|   └── common_fraud.py
-|   └── train_fraud_detection.py    
-├── utils/                 # Утилиты
-│   └── push_secrets_to_github_repo.py
-├── venvs/                 # Архивы виртуальных окружений
-├── .env                   # Файл с переменными окружения
-├── Makefile               # Makefile для автоматизации задач
-├── requirements.txt       # Зависимости Python
-└── README.md              # Это файл
+```text
+fraud_detection_model
 ```
 
-## Синхронизация с удаленным окружением
+Для production-инференса используется alias:
 
-Для работы с удаленным окружением используйте:
+```text
+champion
+```
+
+Если alias не назначен автоматически, его можно назначить через MLflow Client из pod-а внутри Kubernetes, так как MLflow доступен только внутри VPC.
+
+## Деплой API в Kubernetes
+
+Перед запуском bootstrap нужно задать GitHub token для скачивания Docker image из GHCR:
 
 ```bash
-# Синхронизация локального кода с удаленным
-make sync-repo
-
-# Получение актуального .env файла с удаленного сервера
-make sync-env
+export GITHUB_TOKEN='your_github_token'
 ```
 
-## Демонстрация работы систем Apache Airflow, MLFow и Apache Kafka представлена на снимках экрана
+Запуск bootstrap:
 
-![airflow.png](images/airflow.png)
-![mlflow.png](images/mlflow.png)
-![kafka.png](images/kafka.png)
+```bash
+./scripts/bootstrap_k8s.sh
+```
+
+Скрипт выполняет:
+
+```text
+получение kubeconfig
+создание namespace fraud-detection
+создание ConfigMap
+создание fraud-api-secret
+создание ghcr-pull-secret
+применение Deployment и Service
+ожидание rollout
+smoke checks /health и /ready
+```
+
+## Проверка REST API
+
+Получить внешний IP:
+
+```bash
+kubectl get svc -n fraud-detection
+```
+
+Пример текущего endpoint:
+
+```text
+http://81.26.185.115
+```
+
+Проверка health:
+
+```bash
+curl http://81.26.185.115/health
+```
+
+Ожидаемый ответ:
+
+```json
+{"status":"ok"}
+```
+
+Проверка readiness:
+
+```bash
+curl http://81.26.185.115/ready
+```
+
+Ожидаемый ответ:
+
+```json
+{"status":"ready","model_uri":"models:/fraud_detection_model@champion"}
+```
+
+Проверка prediction endpoint:
+
+```bash
+curl -X POST "http://81.26.185.115/predict" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "records": [
+      {
+        "transaction_id": 1,
+        "customer_id": 101,
+        "terminal_id": 1001,
+        "tx_amount": 150.5,
+        "tx_time_seconds": 3600,
+        "tx_time_days": 1,
+        "tx_hour": 1,
+        "tx_day_of_week": 2,
+        "tx_month": 8,
+        "is_weekend": 0
+      }
+    ]
+  }'
+```
+
+Пример ответа:
+
+```json
+{
+  "predictions": [
+    {
+      "transaction_id": 1,
+      "fraud_probability": 1.0,
+      "fraud_prediction": 1
+    }
+  ]
+}
+```
+
+## GitHub Actions
+
+CI/CD workflow выполняет:
+
+```text
+запуск тестов
+сборку Docker image
+push image в GHCR
+деплой Kubernetes manifests
+rollout fraud-api
+```
+
+После полного пересоздания инфраструктуры нужно обновить GitHub Secrets:
+
+```text
+YC_SERVICE_ACCOUNT_KEY_JSON
+YC_K8S_CLUSTER_ID
+```
+
+Также необходимо создать Kubernetes RBAC binding для service account, от имени которого GitHub Actions применяет manifests:
+
+```bash
+kubectl delete clusterrolebinding yc-ci-cluster-admin --ignore-not-found
+
+kubectl create clusterrolebinding yc-ci-cluster-admin \
+  --clusterrole=cluster-admin \
+  --user=<current_yandex_service_account_id>
+```
+
+## Текущее состояние и ограничения
+
+Текущая версия проекта стабилизирована под дедлайн:
+
+- Kafka убрана из активной инфраструктуры
+- Kubernetes worker node разворачивается без публичного IP
+- MLflow Server разворачивается без публичного IP
+- MLflow настраивается через cloud-init без SSH provisioners
+- REST API работает через Kubernetes LoadBalancer
+- модель загружается из MLflow Model Registry по alias `champion`
+
+## Future improvements
+
+Планируемые улучшения:
+
+- вернуть Kafka как отдельный асинхронный контур скоринга
+- реализовать Kafka-backed request/reply inference
+- заменить Spark MLflow flavor на лёгкую Python-модель для serving
+- убрать PySpark и Java из API-контейнера
+- добавить HPA для `fraud-api`
+- автоматизировать обновление GitHub Secrets после пересоздания инфраструктуры
+- автоматизировать Kubernetes RBAC для GitHub Actions
+- добавить полноценный мониторинг качества модели и drift detection
