@@ -44,7 +44,7 @@ output "airflow_cluster_name" {
   description = "Managed Airflow cluster name"
   value       = module.airflow-cluster.cluster_name
 }
-
+/*
 output "kafka_cluster_id" {
   description = "Managed Kafka cluster ID"
   value       = module.kafka.cluster_id
@@ -64,3 +64,4 @@ output "kafka_usernames" {
   description = "Kafka usernames"
   value       = module.kafka.usernames
 }
+*/

@@ -1,6 +1,6 @@
 resource "yandex_iam_service_account" "sa" {
   name        = var.name
-  description = "Service account for Airflow, Dataproc, Kafka, storage, MLflow, PostgreSQL and Kubernetes management"
+  description = "Service account for Airflow, Dataproc, storage, MLflow, PostgreSQL and Kubernetes management"
 }
 
 resource "yandex_resourcemanager_folder_iam_member" "sa_roles" {

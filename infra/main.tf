@@ -145,6 +145,7 @@ resource "local_file" "variables_file" {
   file_permission = "0600"
 }
 
+/*
 module "kafka" {
   source = "./modules/kafka"
 
@@ -171,6 +172,7 @@ module "kafka" {
   topics = var.kafka_topics
   users  = var.kafka_users
 }
+*/
 
 # Запись переменных в .env файл
 resource "null_resource" "update_env" {

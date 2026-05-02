@@ -9,11 +9,11 @@ output "subnet_id" {
 output "security_group_id" {
   value = yandex_vpc_security_group.security_group.id
 }
-
+/*
 output "kafka_security_group_id" {
   value = yandex_vpc_security_group.kafka_security_group.id
 }
-
+*/
 output "route_table_id" {
   value = yandex_vpc_route_table.route_table.id
 }
