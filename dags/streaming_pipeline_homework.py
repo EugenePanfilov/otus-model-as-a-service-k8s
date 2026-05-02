@@ -40,11 +40,11 @@ DP_SA_ID = Variable.get("DP_SA_ID")
 MLFLOW_TRACKING_URI = Variable.get("MLFLOW_TRACKING_URI")
 
 # Kafka / streaming
-KAFKA_BOOTSTRAP_SERVERS = Variable.get("KAFKA_BOOTSTRAP_SERVERS")
-KAFKA_SCORER_USERNAME = Variable.get("KAFKA_SCORER_USERNAME")
-KAFKA_SCORER_PASSWORD = Variable.get("KAFKA_SCORER_PASSWORD")
-KAFKA_PRODUCER_USERNAME = Variable.get("KAFKA_PRODUCER_USERNAME")
-KAFKA_PRODUCER_PASSWORD = Variable.get("KAFKA_PRODUCER_PASSWORD")
+KAFKA_BOOTSTRAP_SERVERS = Variable.get("KAFKA_BOOTSTRAP_SERVERS", default_var="disabled:9091")
+KAFKA_SCORER_USERNAME = Variable.get("KAFKA_SCORER_USERNAME", default_var="disabled")
+KAFKA_SCORER_PASSWORD = Variable.get("KAFKA_SCORER_PASSWORD", default_var="disabled")
+KAFKA_PRODUCER_USERNAME = Variable.get("KAFKA_PRODUCER_USERNAME", default_var="disabled")
+KAFKA_PRODUCER_PASSWORD = Variable.get("KAFKA_PRODUCER_PASSWORD", default_var="disabled")
 
 INPUT_TOPIC = "fraud.input.transactions"
 OUTPUT_TOPIC = "fraud.output.predictions"

@@ -150,7 +150,7 @@ variable "k8s_version" {
 variable "k8s_node_count" {
   description = "Number of worker nodes"
   type        = number
-  default     = 3
+  default     = 1
 }
 
 variable "k8s_node_cores" {

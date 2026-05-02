@@ -36,7 +36,7 @@ chmod 600 $path_to_user/.mlflow.conf
 
 # Копируем systemd сервис для запуска от имени пользователя
 log "Настройка пользовательского systemd сервиса"
-sudo cp mlflow.service /etc/systemd/system/
+sudo cp $path_to_user/mlflow.service /etc/systemd/system/mlflow.service
 sudo systemctl daemon-reload
 sudo systemctl enable mlflow.service
 sudo systemctl start mlflow.service

@@ -55,7 +55,7 @@ resource "yandex_kubernetes_node_group" "this" {
 
     network_interface {
       subnet_ids         = [var.subnet_id]
-      nat                = true
+      nat                = false
       security_group_ids = var.security_group_ids
     }
 
