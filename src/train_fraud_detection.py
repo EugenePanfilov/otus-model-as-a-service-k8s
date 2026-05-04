@@ -249,6 +249,8 @@ def main():
                 run_id=metrics["run_id"],
                 model_name=model_name,
                 description=description,
+                candidate_metric_name="fraud_f1",
+                candidate_metric_value=metrics["fraud_f1"],
             )
             print(f"Registered model version: {version}")
 

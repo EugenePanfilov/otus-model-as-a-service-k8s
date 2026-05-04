@@ -761,11 +761,20 @@ def register_model_as_candidate(
     run_id: str,
     model_name: str,
     description: str = "",
+    candidate_metric_name: str = "fraud_f1",
+    candidate_metric_value: Optional[float] = None,
 ) -> str:
     """
-    Регистрирует новую версию модели.
-    Если champion уже существует -> новая версия получает alias challenger.
-    Если champion отсутствует -> новая версия получает alias champion.
+    Регистрирует новую версию модели и назначает alias.
+
+    Логика:
+    - если champion отсутствует, новая версия становится champion;
+    - если champion есть, сравниваем новую модель с текущим champion
+      по candidate_metric_name;
+    - если новая модель лучше, она получает alias champion;
+    - иначе новая версия получает alias challenger.
+
+    Основная метрика по умолчанию: fraud_f1.
     """
     client = MlflowClient()
 
@@ -780,6 +789,17 @@ def register_model_as_candidate(
 
     time.sleep(5)
 
+    if candidate_metric_value is None:
+        try:
+            candidate_run = client.get_run(run_id)
+            candidate_metric_value = candidate_run.data.metrics.get(candidate_metric_name)
+        except Exception as e:
+            print(
+                f"Не удалось получить метрику {candidate_metric_name} "
+                f"для новой модели: {e}"
+            )
+            candidate_metric_value = None
+
     champion_version = get_model_version_by_alias_safe(model_name, "champion")
 
     if champion_version is None:
@@ -789,14 +809,74 @@ def register_model_as_candidate(
             alias="champion",
             description=description or "Первая зарегистрированная версия модели",
         )
-        print(f"Первая версия {new_version} зарегистрирована как champion")
+        print(
+            f"Первая версия {new_version} зарегистрирована как champion "
+            f"по метрике {candidate_metric_name}={candidate_metric_value}"
+        )
+        return new_version
+
+    champion_metric_value = None
+    try:
+        champion_run = client.get_run(champion_version.run_id)
+        champion_metric_value = champion_run.data.metrics.get(candidate_metric_name)
+    except Exception as e:
+        print(
+            f"Не удалось получить метрику {candidate_metric_name} "
+            f"для текущего champion: {e}"
+        )
+
+    print(
+        f"Сравнение моделей по {candidate_metric_name}: "
+        f"candidate version={new_version}, value={candidate_metric_value}; "
+        f"champion version={champion_version.version}, value={champion_metric_value}"
+    )
+
+    should_promote = (
+        candidate_metric_value is not None
+        and (
+            champion_metric_value is None
+            or float(candidate_metric_value) > float(champion_metric_value)
+        )
+    )
+
+    if should_promote:
+        set_model_alias(
+            model_name=model_name,
+            version=new_version,
+            alias="champion",
+            description=description
+            or (
+                f"Promoted to champion because "
+                f"{candidate_metric_name}={candidate_metric_value} "
+                f"is better than previous champion "
+                f"{candidate_metric_name}={champion_metric_value}"
+            ),
+        )
+
+        try:
+            client.set_model_version_tag(
+                name=model_name,
+                version=str(champion_version.version),
+                key="previous_alias",
+                value="previous_champion",
+            )
+        except Exception as e:
+            print(f"Не удалось установить tag previous_champion: {e}")
+
+        print(
+            f"Новая версия {new_version} назначена champion. "
+            f"Предыдущий champion: {champion_version.version}"
+        )
     else:
         set_model_alias(
             model_name=model_name,
             version=new_version,
             alias="challenger",
-            description=description or "Новая модель-кандидат для A/B теста",
+            description=description or "Новая модель-кандидат",
         )
-        print(f"Новая версия {new_version} зарегистрирована как challenger")
+        print(
+            f"Новая версия {new_version} зарегистрирована как challenger. "
+            f"Текущий champion остаётся: {champion_version.version}"
+        )
 
     return new_version
