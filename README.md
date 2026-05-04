@@ -12,7 +12,7 @@
 6. Для production-инференса используется alias `champion`.
 7. FastAPI-сервис в Kubernetes загружает модель из MLflow и отдаёт предсказания через REST API.
 
-Текущая версия проекта использует синхронный REST-инференс. Kafka/streaming-контур был исключён из активной инфраструктуры, чтобы упростить и стабилизировать сдаваемую версию проекта. В дальнейшем Kafka может быть возвращена как отдельный асинхронный контур скоринга и буферизации нагрузки.
+Текущая версия проекта реализует синхронный REST-инференс. Основной акцент сделан на воспроизводимом MLOps-контуре: инфраструктура как код, оркестрация обучения, регистрация модели, контейнеризация и развёртывание API в Kubernetes.
 
 ## Компоненты инфраструктуры
 
@@ -68,8 +68,7 @@ FastAPI REST API
 ```text
 .
 ├── dags/
-│   ├── training_pipeline_homework.py
-│   └── streaming_pipeline_homework.py
+│   └── training_pipeline_homework.py
 ├── data/
 │   └── input_data/
 ├── infra/
@@ -94,16 +93,14 @@ FastAPI REST API
 │   └── create_venv_archive.sh
 ├── src/
 │   ├── api/
-│   ├── train_fraud_detection.py
-│   └── common_fraud.py
+│   ├── common_fraud.py
+│   └── train_fraud_detection.py
 ├── Dockerfile
 ├── Makefile
 ├── requirements.txt
 ├── requirements-api.txt
 └── README.md
 ```
-
-`streaming_pipeline_homework.py` оставлен в репозитории как задел под будущий Kafka-based streaming scoring, но в текущей активной инфраструктуре Kafka отключена.
 
 ## Предварительные требования
 
@@ -174,9 +171,17 @@ training_pipeline_homework
 
 Он запускает обучение модели на Dataproc и логирует результат в MLflow.
 
-## Проверка модели в MLflow
+## Обучение модели
 
-После успешного выполнения DAG модель должна быть зарегистрирована как:
+Обучение выполняется через Airflow DAG:
+
+```text
+training_pipeline_homework
+```
+
+DAG создаёт временный Dataproc-кластер, запускает PySpark job, сохраняет результаты эксперимента в MLflow и регистрирует модель в Model Registry.
+
+После завершения обучения модель должна быть зарегистрирована как:
 
 ```text
 fraud_detection_model
@@ -225,7 +230,7 @@ smoke checks /health и /ready
 kubectl get svc -n fraud-detection
 ```
 
-Пример текущего endpoint:
+Пример endpoint:
 
 ```text
 http://81.26.185.115
@@ -325,22 +330,21 @@ kubectl create clusterrolebinding yc-ci-cluster-admin \
 
 Текущая версия проекта стабилизирована под дедлайн:
 
-- Kafka убрана из активной инфраструктуры
 - Kubernetes worker node разворачивается без публичного IP
 - MLflow Server разворачивается без публичного IP
 - MLflow настраивается через cloud-init без SSH provisioners
 - REST API работает через Kubernetes LoadBalancer
 - модель загружается из MLflow Model Registry по alias `champion`
+- API-контейнер содержит зависимости, необходимые для загрузки текущей Spark-модели из MLflow
 
 ## Future improvements
 
 Планируемые улучшения:
 
-- вернуть Kafka как отдельный асинхронный контур скоринга
-- реализовать Kafka-backed request/reply inference
 - заменить Spark MLflow flavor на лёгкую Python-модель для serving
 - убрать PySpark и Java из API-контейнера
 - добавить HPA для `fraud-api`
 - автоматизировать обновление GitHub Secrets после пересоздания инфраструктуры
 - автоматизировать Kubernetes RBAC для GitHub Actions
 - добавить полноценный мониторинг качества модели и drift detection
+- добавить калибровку вероятностей и более аккуратную настройку порога fraud-решения
